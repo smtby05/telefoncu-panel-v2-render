@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: telefoncu-paneli
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/status
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4.1-mini
+      - key: EXCHANGE_RATE_API_URL
+        sync: false
