@@ -15,9 +15,15 @@ Kurulum tamamlandıktan sonra kurulum ekranı yeniden açılamaz. Giriş ekranı
 
 `OWNER` hesabı sistem sahibidir; silinemez, pasifleştirilemez veya rolü düşürülemez. OWNER; ADMIN, MANAGER, STAFF, CASHIER ve TECHNICIAN hesapları oluşturabilir ve ayrıntılı izinlerini yönetebilir.
 
-`OWNER` ve `ADMIN` hesapları kullanıcı yönetiminde tam yetkilidir. Yönetici; personelin rolünü ve izinlerini değiştirebilir, hesabını askıya alabilir veya aktifleştirebilir, geçici şifre belirleyebilir ve yetkisi dahilindeki hesabı silebilir. Kullanıcı kendi rolünü değiştiremez, kendini pasifleştiremez veya yönetici sıfırlama ekranından kendi şifresini yenileyemez; bunun için **Hesabım** ekranı kullanılır.
+## Kullanıcı Yönetimi
 
-Yönetici **Kullanıcılar** ekranında her personelin açtığı servisleri, yaptığı satışları, al-sat işlemlerini, son faaliyetlerini ve hesaplanan kazanç dağılımını görür. Yönetici olmayan kullanıcıda aynı menü **Kendi İşlerim** olarak görünür ve yalnızca o hesaba bağlı kayıtları listeler.
+- `OWNER` ve `ADMIN` hesapları Kullanıcılar ekranında personel hesaplarını görür.
+- Yönetici; ad soyad, kullanıcı adı, e-posta ve telefon bilgisini değiştirebilir.
+- Yönetici; rol ve ayrıntılı izinleri değiştirebilir, şifreyi yenileyebilir, hesabı askıya alabilir veya askıdan çıkarabilir.
+- `OWNER` ve `ADMIN`, OWNER dışındaki ve kendi hesapları olmayan kullanıcıları silebilir.
+- `STAFF`, `MANAGER`, `CASHIER` ve `TECHNICIAN` hesaplarında Kullanıcılar menüsü gösterilmez. Bu kullanıcılar yalnızca Hesabım ekranındaki kendi bilgilerini yönetebilir.
+- Bütün yönetim kontrolleri yalnızca arayüzde değil, `/api/users` sunucu uçlarında da rol kontrolüyle korunur.
+- Şifre değiştirme, askıya alma ve silme işleminde hedef kullanıcının açık oturumları kapatılır.
 
 ## Güvenlik
 
@@ -32,7 +38,7 @@ Yönetici **Kullanıcılar** ekranında her personelin açtığı servisleri, ya
 
 ## Veri ve Yedek
 
-Sunucu kullanıcı, güvenlik ve işletme verilerini `data/database.json` içinde ortak ve kalıcı olarak tutar. Tarayıcıda ayrıca çevrimdışı çalışma kopyası bulunur. Giriş yapılınca en güncel sunucu verisi alınır; servis, stok, kasa ve diğer değişiklikler sunucuya senkronlanır.
+Sunucu kullanıcı, güvenlik ve işletme verilerini varsayılan olarak `data/database.json` içinde tutar. `DATA_DIR` environment variable tanımlanırsa veritabanı bu kalıcı klasörde saklanır; Render persistent disk kullanırken mount yolunu `DATA_DIR` olarak vermek gerekir. Tarayıcıda ayrıca çevrimdışı çalışma kopyası bulunur. Giriş yapılınca en güncel sunucu verisi alınır; servis, stok, kasa ve diğer değişiklikler sunucuya senkronlanır.
 
 Ayarlar bölümünden tüm veriler JSON veya Excel uyumlu CSV olarak dışa aktarılabilir. Büyük kurulumlarda aynı API katmanı PostgreSQL gibi yönetilen bir veritabanına taşınabilir.
 
@@ -82,16 +88,3 @@ Uygulama PWA desteğine sahiptir. HTTPS üzerinden yayınlandıktan sonra Androi
 Canlı ortamda en az `SESSION_SECRET` ayarlanmalıdır. Fotoğraf okuma için `OPENAI_API_KEY`, canlı kur için `EXCHANGE_RATE_API_URL` eklenebilir.
 
 Önemli: Render ücretsiz web hizmetinde kalıcı disk bulunmaz. Ücretsiz deneme ve ilk kullanım için uygundur; hizmet yeniden oluşturulursa sunucudaki kayıtlar sıfırlanabilir. Gerçek işletme kullanımında Render kalıcı diskli planı veya yönetilen kalıcı veritabanı kullanılmalı ve Ayarlar bölümünden düzenli JSON yedeği alınmalıdır.
-
-## Tek Tıkla Başlatma
-
-ZIP dosyasını tamamen çıkarttıktan sonra `PANELI_AC.vbs` dosyasına çift tıklayın. Bu başlatıcı Node.js'i PATH dışında yaygın kurulum klasörlerinde de arar, Node.js yoksa `winget` ile LTS kurulumunu dener, boş port seçer, sunucunun gerçekten hazır olmasını bekler ve ardından tarayıcıyı açar. Ayrıntılı hata günlükleri `logs/` klasörüne yazılır.
-
-- Başlat: `PANELI_AC.vbs` veya `PANELI_BASLAT.cmd`
-- Durdur: `PANELI_DURDUR.cmd`
-- GitHub'a hazırlayıp Render ekranını aç: `SUNUCUYA_HAZIRLA.vbs`
-
-Ücretli ve kalıcı diskli Render kurulumu için örnek dosya `render-persistent.yaml` olarak eklenmiştir. Bu dosya kullanıldığında ücretli Render planı gerekir; varsayılan `render.yaml` ücretsiz deneme yapılandırmasıdır.
-
-## Başlatıcı düzeltmesi (v2)
-PowerShell'in tek Node.js yolu bulunduğunda yolu yalnızca `C` olarak algılamasına neden olan hata giderildi.

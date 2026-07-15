@@ -9,7 +9,7 @@ const { URL } = require("node:url");
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
-const PORT = process.env.PORT || 8787;
+const PORT = Number(process.env.PORT || 8787);
 const PROD = process.env.NODE_ENV === "production";
 const SESSION_TTL = 12 * 60 * 60 * 1000;
 const sessions = new Map();
@@ -234,11 +234,6 @@ async function api(req, res, url) {
   if (!session) return json(res, 401, { error: "Oturum gerekli." });
   const user = db.users.find(x => x.id === session.userId);
   if (!user) return json(res, 401, { error: "Kullanıcı bulunamadı." });
-  if (!user.active) {
-    const token = cookies(req).panel_session;
-    if (token) sessions.delete(token);
-    return json(res, 403, { error: "Bu hesap askıya alınmış." }, { "Set-Cookie": sessionCookie("", true) });
-  }
   if (url.pathname === "/api/ocr" && req.method === "POST") {
     if (!process.env.OPENAI_API_KEY) return json(res, 503, { error: "Fotoğraf okuma API anahtarı sunucuda tanımlanmamış." });
     const data = await body(req);
@@ -342,36 +337,66 @@ async function api(req, res, url) {
     if (!["OWNER", "ADMIN"].includes(user.role)) return json(res, 403, { error: "Kullanıcı yönetme yetkisi gerekli." });
     const target = db.users.find(x => x.id === url.pathname.split("/")[3]);
     if (!target) return json(res, 404, { error: "Kullanıcı bulunamadı." });
-    if (target.role === "OWNER" && target.id !== user.id) return json(res, 403, { error: "OWNER hesabı üzerinde bu işlem yapılamaz." });
+    if (target.role === "OWNER" && target.id !== user.id) return json(res, 403, { error: "İşletme Sahibi hesabı başka bir kullanıcı tarafından değiştirilemez." });
     const data = await body(req);
-    if (target.id === user.id && ((data.role && data.role !== target.role) || data.active === false)) return json(res, 403, { error: "Kendi rolünüzü değiştiremez veya hesabınızı pasifleştiremezsiniz." });
-    if (data.role === "OWNER" && user.role !== "OWNER") return json(res, 403, { error: "Yalnızca OWNER bu rolü verebilir." });
-    if (target.role === "OWNER" && (data.active === false || (data.role && data.role !== "OWNER"))) return json(res, 403, { error: "OWNER pasifleştirilemez veya yetkisi düşürülemez." });
-    Object.assign(target, { ...(data.role ? { role: data.role } : {}), ...(typeof data.active === "boolean" ? { active: data.active } : {}), ...(data.permissions ? { permissions: data.permissions } : {}) });
-    if (data.active === false) for (const [token, s] of sessions) if (s.userId === target.id) sessions.delete(token);
-    audit(db, req, "USER_UPDATED", user.id, { entityType: "USER", entityId: target.id }); writeDb(db);
+    const allowedRoles = ["OWNER", "ADMIN", "MANAGER", "STAFF", "CASHIER", "TECHNICIAN"];
+    if (data.role && !allowedRoles.includes(data.role)) return json(res, 400, { error: "Geçersiz kullanıcı rolü." });
+    if (data.role === "OWNER" && user.role !== "OWNER") return json(res, 403, { error: "Yalnızca İşletme Sahibi OWNER rolünü verebilir." });
+    if (target.role === "OWNER" && (data.active === false || (data.role && data.role !== "OWNER"))) return json(res, 403, { error: "İşletme Sahibi pasifleştirilemez veya yetkisi düşürülemez." });
+
+    const updates = {};
+    if (Object.prototype.hasOwnProperty.call(data, "fullName")) {
+      const fullName = String(data.fullName || "").trim();
+      if (!fullName) return json(res, 400, { error: "Ad soyad boş bırakılamaz." });
+      updates.fullName = fullName;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "username")) {
+      const username = String(data.username || "").trim();
+      if (!username) return json(res, 400, { error: "Kullanıcı adı boş bırakılamaz." });
+      if (db.users.some(x => x.id !== target.id && x.username.toLowerCase() === username.toLowerCase())) return json(res, 409, { error: "Bu kullanıcı adı kullanımda." });
+      updates.username = username;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "email")) {
+      const email = String(data.email || "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 400, { error: "Geçerli bir e-posta girin." });
+      if (db.users.some(x => x.id !== target.id && x.email.toLowerCase() === email)) return json(res, 409, { error: "Bu e-posta kullanımda." });
+      updates.email = email;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "phone")) updates.phone = String(data.phone || "").trim();
+    if (data.role) updates.role = data.role;
+    if (typeof data.active === "boolean") updates.active = data.active;
+    if (Array.isArray(data.permissions)) updates.permissions = data.permissions.filter(x => typeof x === "string");
+    if (updates.role === "OWNER") updates.permissions = ["*"];
+
+    const oldValue = publicUser(target);
+    Object.assign(target, updates);
+    if (updates.active === false) for (const [token, activeSession] of sessions) if (activeSession.userId === target.id) sessions.delete(token);
+    audit(db, req, "USER_UPDATED", user.id, { entityType: "USER", entityId: target.id, oldValue, newValue: publicUser(target) });
+    writeDb(db);
     return json(res, 200, { user: publicUser(target) });
   }
   if (url.pathname.endsWith("/reset-password") && url.pathname.startsWith("/api/users/") && req.method === "POST") {
     if (!["OWNER", "ADMIN"].includes(user.role)) return json(res, 403, { error: "Şifre sıfırlama yetkisi gerekli." });
     const target = db.users.find(x => x.id === url.pathname.split("/")[3]), data = await body(req);
     if (!target) return json(res, 404, { error: "Kullanıcı bulunamadı." });
-    if (target.id === user.id) return json(res, 403, { error: "Kendi şifrenizi hesap güvenliği ekranından değiştirin." });
-    if (target.role === "OWNER") return json(res, 403, { error: "OWNER şifresi başka kullanıcı tarafından değiştirilemez." });
+    if (target.role === "OWNER" && target.id !== user.id) return json(res, 403, { error: "OWNER şifresi başka kullanıcı tarafından değiştirilemez." });
     if (!passwordValid(data.password || "")) return json(res, 400, { error: "Şifre kurallara uymuyor." });
     target.passwordHash = await hashPassword(data.password);
-    for (const [token, s] of sessions) if (s.userId === target.id) sessions.delete(token);
-    audit(db, req, "USER_PASSWORD_RESET", user.id, { entityType: "USER", entityId: target.id }); writeDb(db);
+    for (const [token, activeSession] of sessions) if (activeSession.userId === target.id) sessions.delete(token);
+    audit(db, req, "USER_PASSWORD_RESET", user.id, { entityType: "USER", entityId: target.id });
+    writeDb(db);
     return json(res, 200, { ok: true });
   }
   if (url.pathname.startsWith("/api/users/") && req.method === "DELETE") {
-    if (!["OWNER", "ADMIN"].includes(user.role)) return json(res, 403, { error: "Kullanıcı silme yetkisi için yönetici hesabı gerekli." });
+    if (!["OWNER", "ADMIN"].includes(user.role)) return json(res, 403, { error: "Kullanıcı silme yetkisi gerekli." });
     const targetId = url.pathname.split("/")[3], target = db.users.find(x => x.id === targetId);
     if (!target) return json(res, 404, { error: "Kullanıcı bulunamadı." });
-    if (target.role === "OWNER") return json(res, 403, { error: "OWNER hesabı silinemez." });
-    if (user.role === "ADMIN" && target.role === "ADMIN") return json(res, 403, { error: "Başka bir ADMIN hesabını yalnızca OWNER silebilir." });
     if (target.id === user.id) return json(res, 403, { error: "Kendi hesabınızı silemezsiniz." });
-    db.users = db.users.filter(x => x.id !== targetId); audit(db, req, "USER_DELETED", user.id, { entityType: "USER", entityId: targetId }); writeDb(db);
+    if (target.role === "OWNER") return json(res, 403, { error: "İşletme Sahibi hesabı silinemez." });
+    db.users = db.users.filter(x => x.id !== targetId);
+    for (const [token, activeSession] of sessions) if (activeSession.userId === targetId) sessions.delete(token);
+    audit(db, req, "USER_DELETED", user.id, { entityType: "USER", entityId: targetId });
+    writeDb(db);
     return json(res, 200, { ok: true });
   }
   if (url.pathname === "/api/state" && req.method === "GET") {
@@ -395,10 +420,17 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (url.pathname.startsWith("/api/")) return await api(req, res, url);
     const requested = url.pathname === "/" ? "index.html" : decodeURIComponent(url.pathname.slice(1));
-    const file = path.resolve(ROOT, requested);
-    if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      return res.end("<h1>404</h1><p>Aradığınız sayfa bulunamadı.</p><a href='/'>Panele dön</a>");
+    let file = path.resolve(ROOT, requested);
+    const safePath = file.startsWith(ROOT);
+    const exists = safePath && fs.existsSync(file) && !fs.statSync(file).isDirectory();
+    if (!exists) {
+      const acceptsHtml = req.method === "GET" && String(req.headers.accept || "").includes("text/html");
+      const extensionlessRoute = !path.extname(url.pathname);
+      if (safePath && acceptsHtml && extensionlessRoute) file = path.join(ROOT, "index.html");
+      else {
+        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end("<h1>404</h1><p>Aradığınız sayfa bulunamadı.</p><a href='/'>Panele dön</a>");
+      }
     }
     res.writeHead(200, {
       "Content-Type": mime[path.extname(file)] || "application/octet-stream",
@@ -414,14 +446,6 @@ const server = http.createServer(async (req, res) => {
 });
 const HOST = process.env.HOST || (PROD ? "0.0.0.0" : "127.0.0.1");
 if (require.main === module) {
-  server.on("error", error => {
-    if (error && error.code === "EADDRINUSE") {
-      console.error(`Port ${PORT} kullanımda. Panel zaten açık olabilir veya başka bir uygulama bu portu kullanıyor.`);
-    } else {
-      console.error("Sunucu başlatılamadı:", error);
-    }
-    process.exitCode = 1;
-  });
   server.listen(PORT, HOST, () => console.log(`Panel http://${HOST}:${PORT} adresinde çalışıyor.`));
 }
 

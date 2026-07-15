@@ -1,4 +1,4 @@
-const CACHE = "telefoncu-panel-v3";
+const CACHE = "telefoncu-panel-v4-user-management";
 const ASSETS = ["/", "/index.html", "/styles.css", "/styles-v2.css", "/app-v2.js", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", event => {
